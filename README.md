@@ -1,4 +1,4 @@
-#426CulturalHeritage
+# 426CulturalHeritage
 ## How to start
 
 1. Install LLVM >= 12.
@@ -18,3 +18,7 @@
 └── third_party # third party dependencies
     └── antlr-4.9.3-complete.jar
 ```
+
+## Usage
+
+`$ compiler <inputfile> <outputfile>`

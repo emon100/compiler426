@@ -10,7 +10,11 @@
 #include "grammar426Lexer.h"
 #include "grammar426Parser.h"
 
-using namespace antlr4;
+#include "llvm/ADT/StringMap.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/InitLLVM.h"
+#include "llvm/Support/raw_os_ostream.h"
 /*
 using namespace llvm;
 using namespace llvm::orc;
@@ -418,16 +422,95 @@ public:
 };
 */
 
+
+using namespace antlr4;
+using namespace antlr4::tree;
+using namespace llvm;
+
+
+static llvm::cl::opt<std::string> Input(llvm::cl::Positional,
+                                        llvm::cl::Required,
+                                        llvm::cl::desc("<Input file location>"));
+
+static llvm::cl::opt<std::string> Output(llvm::cl::Positional,
+                                         llvm::cl::Required,
+                                         llvm::cl::desc("<Output file location>"));
+class CodeGen {
+    class ToIRVisitor : public tree::ParseTreeVisitor {
+        Module *m;
+        IRBuilder<> builder;
+        Type *voidTy = nullptr;
+        Type *int32Ty = nullptr;
+        Type *int8PtrTy = nullptr;
+        Type *int8PtrPtrTy = nullptr;
+        Constant *int32Zero = nullptr;
+        Value *v = nullptr;
+        StringMap<Value *> nameMap;
+    public:
+        explicit ToIRVisitor(Module *module) :
+                m(module),
+                builder(module->getContext()),
+                voidTy(Type::getVoidTy(module->getContext())),
+                int32Ty(Type::getInt32Ty(module->getContext())),
+                int8PtrTy(Type::getInt8PtrTy(module->getContext())),
+                int8PtrPtrTy(int8PtrTy->getPointerTo()),
+                int32Zero(ConstantInt::get(int32Ty, 21, true)){ }
+
+
+        antlrcpp::Any visit(tree::ParseTree *tree) override {
+            tree->accept(this);
+            return antlrcpp::Any(124);
+        }
+
+        antlrcpp::Any visit(grammar426Parser::ProgramContext *tree){
+            FunctionType *mainFty = FunctionType::get(int32Ty, {int32Ty, int8PtrPtrTy}, false);
+            Function *mainFn = Function::Create(mainFty, GlobalValue::ExternalLinkage, "main", m);
+            BasicBlock *basicBlock = BasicBlock::Create(m->getContext(), "entry", mainFn);
+            builder.SetInsertPoint(basicBlock);
+            builder.CreateRet(int32Zero);
+            tree->accept(this);
+            return antlrcpp::Any(124);
+        }
+
+        antlrcpp::Any visitChildren(ParseTree *node) override {
+            return antlrcpp::Any(124);
+        }
+
+        antlrcpp::Any visitErrorNode(ErrorNode *node) override {
+            return antlrcpp::Any(124);
+        }
+
+        antlrcpp::Any visitTerminal(TerminalNode *node) override {
+            return antlrcpp::Any(12);
+        }
+    };
+public:
+    void compile(grammar426Parser::ProgramContext *tree){
+        LLVMContext Ctx;
+        Module m("example", Ctx);
+        ToIRVisitor toir(&m);
+        toir.visit(tree);
+        std::error_code code;
+        raw_fd_ostream os(Output.getValue(), code);
+        m.print(os, nullptr);
+    }
+};
 int main(int argc, const char **argv) {
+    llvm::InitLLVM X(argc, argv);
+    llvm::cl::ParseCommandLineOptions(argc, argv, "compiler426 - the compiler I want to make.");
+
     ANTLRFileStream fileStream;
-    fileStream.loadFromFile("/home/emon100/source/compiler/example/longprogram.txt");
+    auto filename = Input.getValue();
+    std::cout<<filename<<'\n';
+    fileStream.loadFromFile(filename);
 
     grammar426Lexer lexer(&fileStream);
     CommonTokenStream tokens(&lexer);
 
     grammar426Parser parser(&tokens);
-    tree::ParseTree* tree = parser.program();
+    grammar426Parser::ProgramContext *tree = parser.program();
 
     std::cout << tree->toStringTree(&parser, true) << std::endl << std::endl;
+    CodeGen().compile(tree);
     return 0;
 }
