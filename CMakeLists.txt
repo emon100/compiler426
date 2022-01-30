@@ -21,7 +21,7 @@ find_package(ANTLR REQUIRED)
 
 
 # Call macro to add lexer and grammar to your build dependencies.
-antlr_target(SampleGrammar grammar426.g4)
+antlr_target(SampleGrammar grammar426.g4 LEXER PARSER VISITOR)
 # include generated files in project environment
 include_directories(${ANTLR_SampleGrammar_OUTPUT_DIR})
 
