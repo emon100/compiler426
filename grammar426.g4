@@ -126,7 +126,7 @@ expressionSequence
 
 
 singleExpression
- : functionDeclaration # FunctionExpression
+ : functionDeclaration                                                    # FunctionExpression
  | singleExpression '[' expressionSequence ']'                            # MemberIndexExpression
  | singleExpression arguments                                             # ArgumentsExpression
  | '-' singleExpression                                                   # UnaryMinusExpression
@@ -135,7 +135,7 @@ singleExpression
  | singleExpression ( '*' | '/' | '%' ) singleExpression                  # MultiplicativeExpression
  | singleExpression ( '+' | '-' ) singleExpression                        # AdditiveExpression
  | singleExpression ( '<' | '>' | '<=' | '>=' ) singleExpression          # RelationalExpression
- | singleExpression ( '==' | '!=' ) singleExpression      # EqualityExpression
+ | singleExpression ( '==' | '!=' ) singleExpression                     # EqualityExpression
  | singleExpression And singleExpression                                 # LogicalAndExpression
  | singleExpression Or singleExpression                                 # LogicalOrExpression
  | singleExpression '=' singleExpression                                # AssignmentExpression

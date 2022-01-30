@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
@@ -9,12 +10,19 @@
 #include "antlr4-runtime.h"
 #include "grammar426Lexer.h"
 #include "grammar426Parser.h"
+#include "grammar426BaseVisitor.h"
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_os_ostream.h"
+
+#ifndef NDEBUG
+#define DEBUG(x) do { x << std::endl;} while (0);
+#else
+#define DEBUG(x)
+#endif
 /*
 using namespace llvm;
 using namespace llvm::orc;
@@ -435,64 +443,126 @@ static llvm::cl::opt<std::string> Input(llvm::cl::Positional,
 static llvm::cl::opt<std::string> Output(llvm::cl::Positional,
                                          llvm::cl::Required,
                                          llvm::cl::desc("<Output file location>"));
-class CodeGen {
-    class ToIRVisitor : public tree::ParseTreeVisitor {
-        Module *m;
-        IRBuilder<> builder;
-        Type *voidTy = nullptr;
-        Type *int32Ty = nullptr;
-        Type *int8PtrTy = nullptr;
-        Type *int8PtrPtrTy = nullptr;
-        Constant *int32Zero = nullptr;
-        Value *v = nullptr;
-        StringMap<Value *> nameMap;
+
+namespace CodeGen {
+    std::unique_ptr context = std::make_unique<llvm::LLVMContext>();
+    std::unique_ptr module = std::make_unique<llvm::Module>("Compiler 426", *context);
+    std::unique_ptr<IRBuilder<>> builder = std::make_unique<llvm::IRBuilder<>>(*context);
+    Type *voidTy = Type::getVoidTy(module->getContext());
+    Type *int32Ty = Type::getInt32Ty(module->getContext());
+    Constant *int32Zero = ConstantInt::get(int32Ty, 21, true);
+    StringMap<Type *> typeMap{{"number", int32Ty}};
+    StringMap<Value *> namedValues;
+
+    class ToIRVisitor : public grammar426BaseVisitor {
     public:
-        explicit ToIRVisitor(Module *module) :
-                m(module),
-                builder(module->getContext()),
-                voidTy(Type::getVoidTy(module->getContext())),
-                int32Ty(Type::getInt32Ty(module->getContext())),
-                int8PtrTy(Type::getInt8PtrTy(module->getContext())),
-                int8PtrPtrTy(int8PtrTy->getPointerTo()),
-                int32Zero(ConstantInt::get(int32Ty, 21, true)){ }
+        class FunctionParameterVisitor : public grammar426BaseVisitor {
+            StringMap<Type *> typeMap;
+        public:
+            explicit FunctionParameterVisitor(StringMap<Type *> typeMap) : typeMap(typeMap) {}
 
+            antlrcpp::Any visitFunctionDeclaration(grammar426Parser::FunctionDeclarationContext *ctx) override {
+                if (ctx->formalParameterList()) {
+                    return visitFormalParameterList(ctx->formalParameterList());
+                } else {
+                    llvm::SmallVector<Type *> parametersTypes;
+                    llvm::SmallVector<std::string> parametersNames;
+                    return std::pair(parametersTypes, parametersNames);
+                }
+            }
 
-        antlrcpp::Any visit(tree::ParseTree *tree) override {
-            tree->accept(this);
-            return antlrcpp::Any(124);
+            antlrcpp::Any visitFormalParameterList(grammar426Parser::FormalParameterListContext *ctx) override {
+                llvm::SmallVector<Type *> parametersTypes;
+                llvm::SmallVector<std::string> parametersNames;
+
+                auto &&children = ctx->children;
+                size_t sz = children.size();
+                parametersNames.reserve(sz / 2);
+                parametersTypes.reserve(sz / 2);
+                for (int i = 0; i < sz; ++i) {
+                    auto &&typeName = children[i]->getText();
+                    DEBUG(std::cout << "parametertypeName" << typeName);
+                    Type *type = typeMap[typeName];
+                    assert(type && "Should declare parameter type before use");
+                    parametersTypes.emplace_back(type);
+                    ++i;
+                    std::string name = children[i]->getText();
+                    DEBUG(std::cout << "parameterName" << name);
+                    parametersNames.emplace_back(std::move(name));
+                }
+                return std::pair(parametersTypes, parametersNames);
+            }
+        };
+
+        class FunctionBodyVisitor : public grammar426BaseVisitor {
+        public:
+            antlrcpp::Any visitVariableStatement(grammar426Parser::VariableStatementContext *ctx) override {
+                Type *variableType = typeMap[ctx->Type()->getText()];
+                assert(variableType && "Should declare type of variable before use");
+                for (auto &&variableDecl: ctx->variableDeclarationList()->variableDeclaration()) {
+                    // avoid redefinition: Search the variable in scope table.
+                    auto &&variableName = variableDecl->Identifier()->getText();
+                    assert(namedValues.find(variableName) == namedValues.end() && "redefinition");
+
+                    if (variableDecl->initialiser()) {
+                        auto variableInitialValueText = std::stoi(
+                                variableDecl->initialiser()->singleExpression()->getText());
+                        DEBUG(std::cout << "variableInitialValueText: " << variableInitialValueText);
+                        namedValues[variableName] = ConstantInt::get(int32Ty, variableInitialValueText, true);
+                    }
+                }
+                return std::any();
+            }
+
+            antlrcpp::Any visitReturnStatement(grammar426Parser::ReturnStatementContext *ctx) override {
+                //TEST: variable Name
+                auto &&vname = ctx->expressionSequence()->getText();
+                DEBUG(std::cout << "return value: "<<vname);
+                Value *v = namedValues[vname];
+                return v;
+            }
+        };
+
+        antlrcpp::Any visitFunctionDeclaration(grammar426Parser::FunctionDeclarationContext *ctx) override {
+            Type *functionReturnType = typeMap[ctx->Type()->getText()];
+            assert(functionReturnType && "Should declare return type of functionType before use");
+            auto visitor = FunctionParameterVisitor(typeMap);
+
+            // get parameters by visiting formalParameterList
+            auto parameters = std::any_cast<std::pair<llvm::SmallVector<Type *>, llvm::SmallVector<std::string>>>(
+                    ctx->accept(
+                            &visitor));
+
+            auto &&parametersTypes = parameters.first;
+            auto &&parametersNames = parameters.second;
+            FunctionType *functionType = FunctionType::get(functionReturnType, parameters.first, false);
+            auto &&functionName = ctx->Identifier()->getText();
+            DEBUG(std::cout << "Function name: " << functionName);
+            Function *func = Function::Create(functionType, GlobalValue::ExternalLinkage, functionName, *module);
+            for (int i = 0; auto &&arg: func->args()) {
+                arg.setName(parametersNames[i]);
+            }
+
+            BasicBlock *basicBlock = BasicBlock::Create(module->getContext(), "entry", func);
+            builder->SetInsertPoint(basicBlock);
+
+            FunctionBodyVisitor bodyVisitor;
+            if (Value *ret = std::any_cast<llvm::Value *>(ctx->functionBody()->accept(&bodyVisitor))) {
+                builder->CreateRet(ret);
+            }
+            return func;
         }
 
-        antlrcpp::Any visit(grammar426Parser::ProgramContext *tree){
-            FunctionType *mainFty = FunctionType::get(int32Ty, {int32Ty, int8PtrPtrTy}, false);
-            Function *mainFn = Function::Create(mainFty, GlobalValue::ExternalLinkage, "main", m);
-            BasicBlock *basicBlock = BasicBlock::Create(m->getContext(), "entry", mainFn);
-            builder.SetInsertPoint(basicBlock);
-            builder.CreateRet(int32Zero);
-            tree->accept(this);
-            return antlrcpp::Any(124);
-        }
-
-        antlrcpp::Any visitChildren(ParseTree *node) override {
-            return antlrcpp::Any(124);
-        }
-
-        antlrcpp::Any visitErrorNode(ErrorNode *node) override {
-            return antlrcpp::Any(124);
-        }
-
-        antlrcpp::Any visitTerminal(TerminalNode *node) override {
-            return antlrcpp::Any(12);
-        }
     };
-public:
-    void compile(grammar426Parser::ProgramContext *tree){
-        LLVMContext Ctx;
-        Module m("example", Ctx);
-        ToIRVisitor toir(&m);
-        toir.visit(tree);
+
+    void compile(grammar426Parser::ProgramContext *tree) {
+        ToIRVisitor toir;
+
+        tree->accept(&toir);
+
         std::error_code code;
         raw_fd_ostream os(Output.getValue(), code);
-        m.print(os, nullptr);
+        module->print(os, nullptr);
     }
 };
 int main(int argc, const char **argv) {
@@ -501,7 +571,6 @@ int main(int argc, const char **argv) {
 
     ANTLRFileStream fileStream;
     auto filename = Input.getValue();
-    std::cout<<filename<<'\n';
     fileStream.loadFromFile(filename);
 
     grammar426Lexer lexer(&fileStream);
@@ -510,7 +579,6 @@ int main(int argc, const char **argv) {
     grammar426Parser parser(&tokens);
     grammar426Parser::ProgramContext *tree = parser.program();
 
-    std::cout << tree->toStringTree(&parser, true) << std::endl << std::endl;
-    CodeGen().compile(tree);
+    CodeGen::compile(tree);
     return 0;
 }
