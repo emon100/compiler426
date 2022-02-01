@@ -3,6 +3,12 @@
 
 1. Install LLVM >= 12.
 2. `mkdir build && cd build && cmake .. && make`
+3. To run compiled .llvm, please run commands below.
+```zsh
+    % llc tmp.llvm -filetype=obj -o ok.o
+    % clang ok.o -o ok
+    % ./ok
+   ```
 
 ## Project Stucture
 ```
@@ -22,3 +28,10 @@
 ## Usage
 
 `$ compiler <inputfile> <outputfile>`
+
+## Attention
+ANTLR 4.10 isn't released yet (Until 2/2/2022), but I'm already using std::any to replace antlrcpp::Any.
+
+Be careful, `std::any_cast<int *>(std::any(nullptr))` is wrong.
+
+Should use, `std::any_cast<int *>(std::make_any<int *>(nullptr))`.
