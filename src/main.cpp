@@ -449,8 +449,8 @@ namespace CodeGen {
     std::unique_ptr module = std::make_unique<llvm::Module>("Compiler 426", *context);
     std::unique_ptr<IRBuilder<>> builder = std::make_unique<llvm::IRBuilder<>>(*context);
     Type *voidTy = Type::getVoidTy(module->getContext());
-    Type *int32Ty = Type::getInt32Ty(module->getContext());
-    Constant *int32Zero = ConstantInt::get(int32Ty, 21, true);
+    IntegerType *int32Ty = IntegerType::getInt32Ty(module->getContext());
+    Constant *int32Zero = ConstantInt::get(int32Ty, 0, true);
     StringMap<Type *> typeMap{{"number", int32Ty}};
     StringMap<Value *> namedValues;
 
@@ -482,7 +482,7 @@ namespace CodeGen {
                 for (int i = 0; i < sz; ++i) {
                     auto &&typeName = children[i]->getText();
                     DEBUG(std::cout << "parametertypeName" << typeName);
-                    Type *type = typeMap[typeName];
+                    Type *type = typeMap.lookup(typeName);
                     assert(type && "Should declare parameter type before use");
                     parametersTypes.emplace_back(type);
                     ++i;
@@ -494,14 +494,21 @@ namespace CodeGen {
             }
         };
 
-        class FunctionBodyVisitor : public grammar426BaseVisitor {
+        class BlockVisitor : public grammar426BaseVisitor {
         public:
+            antlrcpp::Any visitBlock(grammar426Parser::BlockContext *ctx) override {
+                if (auto sl = ctx->statementList()){
+                    return sl->accept(this);
+                }
+                return std::make_any<llvm::Value *>(nullptr);
+            }
+
             antlrcpp::Any visitVariableStatement(grammar426Parser::VariableStatementContext *ctx) override {
-                Type *variableType = typeMap[ctx->Type()->getText()];
+                Type *variableType = typeMap.lookup(ctx->Type()->getText());
                 assert(variableType && "Should declare type of variable before use");
                 for (auto &&variableDecl: ctx->variableDeclarationList()->variableDeclaration()) {
-                    // avoid redefinition: Search the variable in scope table.
                     auto &&variableName = variableDecl->Identifier()->getText();
+                    // avoid redefinition: Search the variable in scope table.
                     assert(namedValues.find(variableName) == namedValues.end() && "redefinition");
 
                     if (variableDecl->initialiser()) {
@@ -511,20 +518,40 @@ namespace CodeGen {
                         namedValues[variableName] = ConstantInt::get(int32Ty, variableInitialValueText, true);
                     }
                 }
-                return std::any();
+                return {};
             }
 
             antlrcpp::Any visitReturnStatement(grammar426Parser::ReturnStatementContext *ctx) override {
-                //TEST: variable Name
-                auto &&vname = ctx->expressionSequence()->getText();
-                DEBUG(std::cout << "return value: "<<vname);
-                Value *v = namedValues[vname];
+                return builder->CreateRet(std::any_cast<Value *>(ctx->expressionSequence()->accept(this)));
+            }
+
+            antlrcpp::Any visitMultiplicativeExpression(grammar426Parser::MultiplicativeExpressionContext *ctx) override {
+                // Try only multiply.
+                auto &&vec = ctx->singleExpression();
+                auto lhs = std::any_cast<llvm::Value *>(vec[0]->accept(this));
+                auto rhs = std::any_cast<llvm::Value *>(vec[1]->accept(this));
+                return builder->CreateMul(lhs, rhs);
+            }
+
+            antlrcpp::Any visitNumericLiteral(grammar426Parser::NumericLiteralContext *ctx) override {
+                std::string &&numberLiteral = ctx->getText();
+                DEBUG(std::cout << "number literal text: " << numberLiteral);
+                auto *v = static_cast<llvm::Value *>(ConstantInt::get(int32Ty, numberLiteral, 10));
+                assert(v && "literal can't be constructed!");
+                return v;
+            }
+
+            antlrcpp::Any visitIdentifierExpression(grammar426Parser::IdentifierExpressionContext *ctx) override {
+                auto &&vname = ctx->getText();
+                DEBUG(std::cout << "Identifier name: " << vname);
+                Value *v = namedValues.lookup(vname);
+                assert(v && "Variable not found!");
                 return v;
             }
         };
 
         antlrcpp::Any visitFunctionDeclaration(grammar426Parser::FunctionDeclarationContext *ctx) override {
-            Type *functionReturnType = typeMap[ctx->Type()->getText()];
+            Type *functionReturnType = typeMap.lookup(ctx->Type()->getText());
             assert(functionReturnType && "Should declare return type of functionType before use");
             auto visitor = FunctionParameterVisitor(typeMap);
 
@@ -546,13 +573,10 @@ namespace CodeGen {
             BasicBlock *basicBlock = BasicBlock::Create(module->getContext(), "entry", func);
             builder->SetInsertPoint(basicBlock);
 
-            FunctionBodyVisitor bodyVisitor;
-            if (Value *ret = std::any_cast<llvm::Value *>(ctx->functionBody()->accept(&bodyVisitor))) {
-                builder->CreateRet(ret);
-            }
+            BlockVisitor bodyVisitor;
+            ctx->accept(&bodyVisitor);
             return func;
         }
-
     };
 
     void compile(grammar426Parser::ProgramContext *tree) {

@@ -1,5 +1,5 @@
 number main(){
    number a = 3;
-   number  b =3;
-   return a;
+   number  b =15 * a;
+   return b * 3;
 }

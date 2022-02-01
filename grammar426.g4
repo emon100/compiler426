@@ -87,7 +87,7 @@ breakStatement
  ;
 
 returnStatement
- : Return expressionSequence eos
+ : Return expressionSequence? eos
  ;
 
 typeDeclaration
@@ -96,7 +96,7 @@ typeDeclaration
 
 /// FunctionDeclaration
 functionDeclaration
- : Type Identifier '(' formalParameterList? ')' '{' functionBody '}'
+ : Type Identifier '(' formalParameterList? ')' block
  ;
 
 /// FormalParameterList :
@@ -104,12 +104,6 @@ functionDeclaration
 ///     FormalParameterList , Identifier
 formalParameterList
  : Type Identifier ( ',' Type Identifier )*
- ;
-
-/// FunctionBody :
-///     SourceElements?
-functionBody
- : statement*
  ;
 
 arguments
